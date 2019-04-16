@@ -1,0 +1,621 @@
+---
+title: withmakers.github.io
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+---
+
+```{r setup, include=FALSE}
+# library 
+library(flexdashboard)
+library(data.table)
+library(knitr)
+library(kableExtra)
+library(plotly)
+library(dplyr)
+library(grid)
+library(gridExtra)
+library(leaflet)
+library(leaflet.extras)
+library(RColorBrewer)
+library(DT)
+library(MLmetrics)
+h2o.no_progress()
+
+# set start_date
+start_date = 20190401
+
+# user function
+baktest = function(data,start,end,coin,target){
+  
+  TARGET = target
+  COIN_NAME = coin 
+  
+  # ML_DIR
+  if(TARGET=="close"){
+    ML_DIR = paste0("201_",COIN_NAME)
+  }else if(TARGET=="open"){
+    ML_DIR = paste0("202_",COIN_NAME)
+  }else if(TARGET=="high"){
+    ML_DIR = paste0("203_",COIN_NAME)
+  }else if(TARGET=="low"){
+    ML_DIR = paste0("204_",COIN_NAME)
+  }
+  
+  # data_TMP
+  data_TMP = data[date>=start & date<=end,]
+  # cat(">> input date:",range(data_TMP$date),"\n")
+  colnames(data_TMP) = paste0("x",1:ncol(data))
+
+  # h2o.frame
+  data_TMP[,':='(x1=NULL,x8=NULL)]
+  data_hex = as.h2o(data_TMP)
+  
+  # load model 
+  ML_NAME = list.files(file.path(PATH_HOME,"output",ML_DIR))
+  ML_PATH = file.path(PATH_HOME,"output",ML_DIR,ML_NAME)
+  ml = h2o.loadModel(ML_PATH)
+  
+  # pred
+  pred = h2o.predict(ml,newdata=data_hex)
+  pred = as.data.table(pred)
+  colnames(pred) = TARGET
+
+  # return 
+  modified_date = as.Date(max(data[date>=start & date<=end,]$time)) + days(1)
+  new_date = seq(from=modified_date,to=modified_date+days(predict_days-1),by=1)
+  new_date = as.numeric(gsub("-","",new_date))
+  # cat(">> new date:",range(new_date),"\n")
+  list(
+    YHAT=data.table(date=new_date,pred),
+    Y=data[date>=min(new_date) & date<=max(new_date),c("date",TARGET),with=F],
+    VI=as.data.table(h2o.varimp(ml))
+  )
+}
+
+# make_vi
+make_vi = function(coin,target){
+  
+  COIN_NAME = coin
+  TARGET = target
+  
+  # ML_DIR
+  if(TARGET=="close"){
+    ML_DIR = paste0("201_",COIN_NAME)
+  }else if(TARGET=="open"){
+    ML_DIR = paste0("202_",COIN_NAME)
+  }else if(TARGET=="high"){
+    ML_DIR = paste0("203_",COIN_NAME)
+  }else if(TARGET=="low"){
+    ML_DIR = paste0("204_",COIN_NAME)
+  }
+  
+  # load model 
+  ML_NAME = list.files(file.path(PATH_HOME,"output",ML_DIR))
+  ML_PATH = file.path(PATH_HOME,"output",ML_DIR,ML_NAME)
+  ml = h2o.loadModel(ML_PATH)
+  
+  # colnames_w_kor
+  data = fread("c:/Users/user/Documents/BITCOIN/output/BTC_DM.csv")
+  colnames_w_kor = colnames(data)
+  ncol_w_kor = ncol(data)
+  tmp = data.table(colnames_w_kor,variable=paste0("x",1:ncol_w_kor))
+  output = merge(as.data.table(h2o.varimp(ml)),tmp,by="variable")[,list(colnames_w_kor,percentage)]
+  output[,percentage:=round(percentage,4)]
+  output[order(percentage,decreasing=T),]
+}
+
+# up and down 
+date_updown = list(up=c(20190324,20190330),down=c(20190331,20190406))
+
+# colnames_w_kor
+data = fread("c:/Users/user/Documents/BITCOIN/output/BTC_DM.csv")
+colnames_w_kor = colnames(data)
+ncol_w_kor = ncol(data)
+
+# data
+COIN_NAME = "BTC"
+source(file.path(PATH_HOME,"code","101_BTC500_DM.R"))
+data_BTC = data
+
+COIN_NAME = "BCH"
+source(file.path(PATH_HOME,"code","101_BTC500_DM.R"))
+data_BCH = data
+
+COIN_NAME = "ETH"
+source(file.path(PATH_HOME,"code","101_BTC500_DM.R"))
+data_ETH = data
+
+COIN_NAME = "XRP"
+source(file.path(PATH_HOME,"code","101_BTC500_DM.R"))
+data_XRP = data
+
+```
+
+예측
+=====================================
+
+Row {data-height=410}
+-------------------------------------
+
+### 비트코인 상승시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_BTC,start=date_updown$up[1],end=date_updown$up[2],coin="BTC",target="close")
+data_open = baktest(data=data_BTC,start=date_updown$up[1],end=date_updown$up[2],coin="BTC",target="open")
+data_high = baktest(data=data_BTC,start=date_updown$up[1],end=date_updown$up[2],coin="BTC",target="high")
+data_low = baktest(data=data_BTC,start=date_updown$up[1],end=date_updown$up[2],coin="BTC",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+BTC_UP_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 비트코인 하락시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_BTC,start=date_updown$down[1],end=date_updown$down[2],coin="BTC",target="close")
+data_open = baktest(data=data_BTC,start=date_updown$down[1],end=date_updown$down[2],coin="BTC",target="open")
+data_high = baktest(data=data_BTC,start=date_updown$down[1],end=date_updown$down[2],coin="BTC",target="high")
+data_low = baktest(data=data_BTC,start=date_updown$down[1],end=date_updown$down[2],coin="BTC",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+BTC_DOWN_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 비트코인 D+5 가격
+
+```{r}
+# read data
+data_close = readRDS("c:/Users/user/Documents/BITCOIN/output/BTC_close.Rda")
+data_open = readRDS("c:/Users/user/Documents/BITCOIN/output/BTC_open.Rda")
+data_high = readRDS("c:/Users/user/Documents/BITCOIN/output/BTC_high.Rda")
+data_low = readRDS("c:/Users/user/Documents/BITCOIN/output/BTC_low.Rda")
+
+# plot
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y = Y[date>start_date,]
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+Row {data-height=410}
+-------------------------------------
+
+### 비트코인캐시 상승시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_BCH,start=date_updown$up[1],end=date_updown$up[2],coin="BCH",target="close")
+data_open = baktest(data=data_BCH,start=date_updown$up[1],end=date_updown$up[2],coin="BCH",target="open")
+data_high = baktest(data=data_BCH,start=date_updown$up[1],end=date_updown$up[2],coin="BCH",target="high")
+data_low = baktest(data=data_BCH,start=date_updown$up[1],end=date_updown$up[2],coin="BCH",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+BCH_UP_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 비트코인캐시 하락시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_BCH,start=date_updown$down[1],end=date_updown$down[2],coin="BCH",target="close")
+data_open = baktest(data=data_BCH,start=date_updown$down[1],end=date_updown$down[2],coin="BCH",target="open")
+data_high = baktest(data=data_BCH,start=date_updown$down[1],end=date_updown$down[2],coin="BCH",target="high")
+data_low = baktest(data=data_BCH,start=date_updown$down[1],end=date_updown$down[2],coin="BCH",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+BCH_DOWN_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 비트코인캐시 D+5 가격
+
+```{r}
+# read data
+data_close = readRDS("c:/Users/user/Documents/BITCOIN/output/BCH_close.Rda")
+data_open = readRDS("c:/Users/user/Documents/BITCOIN/output/BCH_open.Rda")
+data_high = readRDS("c:/Users/user/Documents/BITCOIN/output/BCH_high.Rda")
+data_low = readRDS("c:/Users/user/Documents/BITCOIN/output/BCH_low.Rda")
+
+# plot
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y = Y[date>start_date,]
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+Row {data-height=410}
+-------------------------------------
+
+### 이더리움 상승시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_ETH,start=date_updown$up[1],end=date_updown$up[2],coin="ETH",target="close")
+data_open = baktest(data=data_ETH,start=date_updown$up[1],end=date_updown$up[2],coin="ETH",target="open")
+data_high = baktest(data=data_ETH,start=date_updown$up[1],end=date_updown$up[2],coin="ETH",target="high")
+data_low = baktest(data=data_ETH,start=date_updown$up[1],end=date_updown$up[2],coin="ETH",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+ETH_UP_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 이더리움 하락시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_ETH,start=date_updown$down[1],end=date_updown$down[2],coin="ETH",target="close")
+data_open = baktest(data=data_ETH,start=date_updown$down[1],end=date_updown$down[2],coin="ETH",target="open")
+data_high = baktest(data=data_ETH,start=date_updown$down[1],end=date_updown$down[2],coin="ETH",target="high")
+data_low = baktest(data=data_ETH,start=date_updown$down[1],end=date_updown$down[2],coin="ETH",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+ETH_DOWN_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 이더리움 D+5 가격
+
+```{r}
+# read data
+data_close = readRDS("c:/Users/user/Documents/BITCOIN/output/ETH_close.Rda")
+data_open = readRDS("c:/Users/user/Documents/BITCOIN/output/ETH_open.Rda")
+data_high = readRDS("c:/Users/user/Documents/BITCOIN/output/ETH_high.Rda")
+data_low = readRDS("c:/Users/user/Documents/BITCOIN/output/ETH_low.Rda")
+
+# plot
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y = Y[date>start_date,]
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+Row {data-height=410}
+-------------------------------------
+
+### 리플 상승시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_XRP,start=date_updown$up[1],end=date_updown$up[2],coin="XRP",target="close")
+data_open = baktest(data=data_XRP,start=date_updown$up[1],end=date_updown$up[2],coin="XRP",target="open")
+data_high = baktest(data=data_XRP,start=date_updown$up[1],end=date_updown$up[2],coin="XRP",target="high")
+data_low = baktest(data=data_XRP,start=date_updown$up[1],end=date_updown$up[2],coin="XRP",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+XRP_UP_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 리플 하락시장 검증
+
+```{r}
+# baktest
+data_close = baktest(data=data_XRP,start=date_updown$down[1],end=date_updown$down[2],coin="XRP",target="close")
+data_open = baktest(data=data_XRP,start=date_updown$down[1],end=date_updown$down[2],coin="XRP",target="open")
+data_high = baktest(data=data_XRP,start=date_updown$down[1],end=date_updown$down[2],coin="XRP",target="high")
+data_low = baktest(data=data_XRP,start=date_updown$down[1],end=date_updown$down[2],coin="XRP",target="low")
+
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+YHAT[,date:=as.character(date)]
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y[,date:=as.character(date)]
+
+XRP_DOWN_MAPE = list(
+  close=MLmetrics::MAPE(YHAT$close,Y$close),
+  open=MLmetrics::MAPE(YHAT$open,Y$open),
+  high=MLmetrics::MAPE(YHAT$high,Y$high),
+  low=MLmetrics::MAPE(YHAT$low,Y$low)
+)
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+### 리플 D+5 가격
+
+```{r}
+# read data
+data_close = readRDS("c:/Users/user/Documents/BITCOIN/output/XRP_close.Rda")
+data_open = readRDS("c:/Users/user/Documents/BITCOIN/output/XRP_open.Rda")
+data_high = readRDS("c:/Users/user/Documents/BITCOIN/output/XRP_high.Rda")
+data_low = readRDS("c:/Users/user/Documents/BITCOIN/output/XRP_low.Rda")
+
+# plot
+YHAT = Reduce(function(...)merge(...,by="date"),list(data_close$YHAT,data_open$YHAT,data_high$YHAT,data_low$YHAT))
+Y = Reduce(function(...)merge(...,by="date"),list(data_close$Y,data_open$Y,data_high$Y,data_low$Y))
+Y = Y[date>start_date,]
+
+plot_ly() %>%
+  add_trace(data=Y, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, 
+            increasing = list(line = list(color = "red")),decreasing = list(line = list(color = "blue")),name="실제") %>%
+  add_trace(data=YHAT, x = ~date, type="candlestick",open = ~open, close = ~close, high = ~high, low = ~low, increasing = 
+              list(line = list(color = "pink")),decreasing = list(line = list(color = "skyblue")),name="예측") %>%
+  layout(xaxis=list(fixedrange=T, title="date",rangeslider = list(visible = F)),yaxis=list(fixedrange=T, title="price"),autosize = T) %>% 
+  config(displayModeBar = F)
+```
+
+데이터 {data-orientation=columns}
+=====================================
+
+Column {data-width=200}
+-------------------------------------
+
+### 변수명
+
+```{r}
+data = fread("c:/Users/user/Documents/BITCOIN/output/BTC_DM.csv")
+tmp = data.table(paste0("X",1:ncol(data)),colnames(data))
+DT::datatable(tmp, options = list(pageLength = nrow(tmp)), rownames= FALSE)
+```
+
+Column {data-width=800}
+-------------------------------------
+
+### 샘플 데이터
+
+```{r}
+data = fread("c:/Users/user/Documents/BITCOIN/output/BTC_DM.csv")
+colnames(data) = paste0("X",1:ncol(data))
+DT::datatable(data, options = list(pageLength = 100))
+```
+
+모델정보 {data-orientation=rows}
+=====================================
+
+Row {data-height=500}
+-------------------------------------
+
+### model version: v3.0.1(2019-04-15)
+
+```{r}
+tmp = data.table(
+  코인명=c('BTC','BTC','BCH','BCH','ETH','ETH','XRP','XRP'),
+  시장=c('상승','하락'),
+  mape=rbind(
+    round(unlist(BTC_UP_MAPE),4),
+    round(unlist(BTC_DOWN_MAPE),4),
+    round(unlist(BCH_UP_MAPE),4),
+    round(unlist(BCH_DOWN_MAPE),4),
+    round(unlist(ETH_UP_MAPE),4),
+    round(unlist(ETH_DOWN_MAPE),4),
+    round(unlist(XRP_UP_MAPE),4),
+    round(unlist(XRP_DOWN_MAPE),4)
+  )
+)
+
+tmp[,mape:=round(apply(tmp[,grep('mape',colnames(tmp),value=T),with=F],1,mean),4)]
+
+cat(">> 모델평가지표(MAPE) \n")
+
+DT::datatable(tmp, rownames = FALSE, options = list(columnDefs = list(list(className = 'dt-center', targets = 0:4))))
+```
+
+Row {data-height=550}
+-------------------------------------
+
+### 비트코인 모델 변수중요도
+
+```{r}
+COIN_NAME = "BTC"
+tmp = Reduce(function(x,y) merge(x,y,by="colnames"),list(
+  setNames(make_vi(coin=COIN_NAME,target="close"),c("colnames","vi_close")),
+  setNames(make_vi(coin=COIN_NAME,target="open"),c("colnames","vi_open")),
+  setNames(make_vi(coin=COIN_NAME,target="high"),c("colnames","vi_high")),
+  setNames(make_vi(coin=COIN_NAME,target="low"),c("colnames","vi_low"))
+))
+tmp[,vi:=rowMeans(.SD),.SDcols=c("vi_close","vi_open","vi_high","vi_low")]
+tmp = tmp[order(vi,decreasing = T),]
+DT::datatable(tmp,options=list(autoHeight=TRUE))
+```
+
+Row {data-height=550}
+-------------------------------------
+
+### 비트코인캐시 모델 변수중요도
+
+```{r}
+COIN_NAME = "BCH"
+tmp = Reduce(function(x,y) merge(x,y,by="colnames"),list(
+  setNames(make_vi(coin=COIN_NAME,target="close"),c("colnames","vi_close")),
+  setNames(make_vi(coin=COIN_NAME,target="open"),c("colnames","vi_open")),
+  setNames(make_vi(coin=COIN_NAME,target="high"),c("colnames","vi_high")),
+  setNames(make_vi(coin=COIN_NAME,target="low"),c("colnames","vi_low"))
+))
+tmp[,vi:=rowMeans(.SD),.SDcols=c("vi_close","vi_open","vi_high","vi_low")]
+tmp = tmp[order(vi,decreasing = T),]
+DT::datatable(tmp,options=list(autoHeight=TRUE))
+```
+
+Row {data-height=550}
+-------------------------------------
+
+### 이더리움 모델 변수중요도
+
+```{r}
+COIN_NAME = "ETH"
+tmp = Reduce(function(x,y) merge(x,y,by="colnames"),list(
+  setNames(make_vi(coin=COIN_NAME,target="close"),c("colnames","vi_close")),
+  setNames(make_vi(coin=COIN_NAME,target="open"),c("colnames","vi_open")),
+  setNames(make_vi(coin=COIN_NAME,target="high"),c("colnames","vi_high")),
+  setNames(make_vi(coin=COIN_NAME,target="low"),c("colnames","vi_low"))
+))
+tmp[,vi:=rowMeans(.SD),.SDcols=c("vi_close","vi_open","vi_high","vi_low")]
+tmp = tmp[order(vi,decreasing = T),]
+DT::datatable(tmp,options=list(autoHeight=TRUE))
+```
+
+Row {data-height=550}
+-------------------------------------
+
+### 리플 모델 변수중요도
+
+```{r}
+COIN_NAME = "XRP"
+tmp = Reduce(function(x,y) merge(x,y,by="colnames"),list(
+  setNames(make_vi(coin=COIN_NAME,target="close"),c("colnames","vi_close")),
+  setNames(make_vi(coin=COIN_NAME,target="open"),c("colnames","vi_open")),
+  setNames(make_vi(coin=COIN_NAME,target="high"),c("colnames","vi_high")),
+  setNames(make_vi(coin=COIN_NAME,target="low"),c("colnames","vi_low"))
+))
+tmp[,vi:=rowMeans(.SD),.SDcols=c("vi_close","vi_open","vi_high","vi_low")]
+tmp = tmp[order(vi,decreasing = T),]
+DT::datatable(tmp,options=list(autoHeight=TRUE))
+```
+
+
+
+
+
+
+
+
+
+
+
+
